@@ -1,6 +1,6 @@
 # 🚀 GPU-Hack: Decentralized GPU Sharing for AI Compute
 
-**HackETHon Kyiv 2025 Submission**
+**ETHKyiv 2025 Submission**
 
 GPU-Hack is a prototype for a decentralized platform that allows users to share their GPU resources for distributed AI workloads and earn rewards based on real-time hardware metrics. It turns idle personal hardware into a earning tool, bridging compute supply with blockchain-based demand.
 
