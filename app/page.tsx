@@ -26,6 +26,10 @@ import {
   DollarSign,
 } from "lucide-react";
 import { useUser } from "@/contexts/user-context";
+import { useWallet } from "@/hooks/useWallet";
+import { useClearNode } from "@/hooks/useClearNode";
+import { Label } from "@/components/ui/label";
+import { Input } from "@/components/ui/input";
 
 interface GPUStats {
   usage: number;
@@ -53,6 +57,30 @@ interface Deposit {
 
 export default function Dashboard() {
   const { user, updateUser } = useUser();
+  const { walletClient, isConnected } = useWallet();
+  const {
+    isAuthenticated,
+    connect,
+    createApplicationSession,
+    closeApplicationSession,
+  } = useClearNode();
+
+  // console.log("isConnected = " , isConnected);
+  // console.log("isAuthenticated = " , isAuthenticated);
+  // console.log("walletClient = " , walletClient);
+
+  // Connect to ClearNode when wallet is connected
+  useEffect(() => {
+    if (isConnected && walletClient && !isAuthenticated) {
+      console.log("Connecting to ClearNode...");
+      connect(walletClient)
+        .then(() => console.log("ClearNode connection initiated"))
+        .catch((error) =>
+          console.error("Failed to connect to ClearNode:", error)
+        );
+    }
+  }, [isConnected, walletClient, isAuthenticated, connect]);
+
   const [gpuStats, setGpuStats] = useState<GPUStats>({
     usage: 0,
     temperature: 45,
@@ -62,6 +90,8 @@ export default function Dashboard() {
 
   const [isSharing, setIsSharing] = useState(false);
   const [sessionTime, setSessionTime] = useState(0);
+  const [depositAmount, setDepositAmount] = useState<string>("0.0001");
+  const [depositError, setDepositError] = useState<string | null>(null);
   const [currentSession, setCurrentSession] = useState<Session | null>(null);
   const [sessions, setSessions] = useState<Session[]>([
     {
@@ -152,25 +182,80 @@ export default function Dashboard() {
     return () => clearInterval(interval);
   }, [isSharing]);
 
-  const startSharing = useCallback(() => {
-    const newSession: Session = {
-      id: Date.now().toString(),
-      startTime: new Date(),
-      duration: 0,
-      pointsEarned: 0,
-      status: "active",
-    };
-    setCurrentSession(newSession);
-    setIsSharing(true);
-    setSessionTime(0);
-  }, []);
+  const validateDepositAmount = (amount: string): boolean => {
+    const value = parseFloat(amount);
+    if (isNaN(value) || value <= 0) {
+      setDepositError("Amount must be a positive number");
+      return false;
+    }
+    if (!/^\d*\.?\d*$/.test(amount)) {
+      setDepositError("Invalid format (e.g., 0.0001)");
+      return false;
+    }
+    setDepositError(null);
+    return true;
+  };
+
+  const handleDepositAmountChange = (
+    e: React.ChangeEvent<HTMLInputElement>
+  ) => {
+    const value = e.target.value;
+    setDepositAmount(value);
+    validateDepositAmount(value);
+  };
+
+  const startSharing = useCallback(async () => {
+    if (!isConnected || !walletClient?.account?.address) {
+      setDepositError("Please connect your wallet first");
+      return;
+    }
+    // if (!isAuthenticated) {
+    //   setDepositError("Authentication required. Please try again.");
+    //   return;
+    // }
+    if (!validateDepositAmount(depositAmount)) {
+      return;
+    }
+
+    try {
+      // Create application session with deposit amount
+      await createApplicationSession(
+        walletClient.account.address,
+        depositAmount
+      );
+
+      // Store deposit amount in localStorage
+      localStorage.setItem("session_deposit_amount", depositAmount);
+
+      // Start GPU sharing session
+      const newSession: Session = {
+        id: Date.now().toString(),
+        startTime: new Date(),
+        duration: 0,
+        pointsEarned: 0,
+        status: "active",
+      };
+      setCurrentSession(newSession);
+      setIsSharing(true);
+      setSessionTime(0);
+    } catch (error) {
+      console.error("Failed to start sharing session:", error);
+      setDepositError("Failed to create session. Please try again.");
+    }
+  }, [
+    isConnected,
+    isAuthenticated,
+    walletClient,
+    depositAmount,
+    createApplicationSession,
+  ]);
 
   const pauseSharing = useCallback(() => {
     setIsSharing(false);
   }, []);
 
-  const stopSharing = useCallback(() => {
-    if (currentSession) {
+  const stopSharing = useCallback(async () => {
+    if (currentSession && walletClient?.account?.address) {
       const pointsEarned = Math.floor(sessionTime * 0.1);
       const completedSession: Session = {
         ...currentSession,
@@ -180,17 +265,39 @@ export default function Dashboard() {
         status: "completed",
       };
 
-      setSessions((prev) => [completedSession, ...prev]);
-      updateUser({
-        totalEarnings: user.totalEarnings + pointsEarned,
-        totalSessions: user.totalSessions + 1,
-        totalHours: user.totalHours + sessionTime / 3600,
-      });
-      setCurrentSession(null);
+      try {
+        // Close application session
+        await closeApplicationSession(
+          walletClient.account.address,
+          pointsEarned
+        );
+
+        // Remove session_deposit_amount from localStorage
+        localStorage.removeItem("session_deposit_amount");
+
+        // Update sessions and user stats
+        setSessions((prev) => [completedSession, ...prev]);
+        updateUser({
+          totalEarnings: user.totalEarnings + pointsEarned,
+          totalSessions: user.totalSessions + 1,
+          totalHours: user.totalHours + sessionTime / 3600,
+        });
+        setCurrentSession(null);
+      } catch (error) {
+        console.error("Failed to close sharing session:", error);
+        setDepositError("Failed to close session. Please try again.");
+      }
     }
     setIsSharing(false);
     setSessionTime(0);
-  }, [currentSession, sessionTime, user, updateUser]);
+  }, [
+    currentSession,
+    sessionTime,
+    walletClient,
+    user,
+    updateUser,
+    closeApplicationSession,
+  ]);
 
   const formatTime = (seconds: number) => {
     const hours = Math.floor(seconds / 3600);
@@ -278,10 +385,9 @@ export default function Dashboard() {
         </div>
 
         <Tabs defaultValue="dashboard" className="space-y-4">
-          <TabsList className="grid w-full grid-cols-3 bg-slate-800/50">
+          <TabsList className="grid w-full grid-cols-2 bg-slate-800/50">
             <TabsTrigger value="dashboard">Dashboard</TabsTrigger>
             <TabsTrigger value="sessions">Sessions</TabsTrigger>
-            <TabsTrigger value="deposits">Deposits</TabsTrigger>
           </TabsList>
 
           <TabsContent value="dashboard" className="space-y-6">
@@ -373,6 +479,25 @@ export default function Dashboard() {
                 </CardHeader>
                 <CardContent className="space-y-6">
                   <div className="text-center space-y-4">
+                    {/* Deposit Input */}
+                    <div className="space-y-2">
+                      <Label htmlFor="deposit-amount" className="text-white">
+                        USDC Deposit Amount
+                      </Label>
+                      <Input
+                        id="deposit-amount"
+                        type="text"
+                        value={depositAmount}
+                        onChange={handleDepositAmountChange}
+                        placeholder="Enter amount (e.g., 0.0001)"
+                        className="bg-slate-700 text-white border-slate-600"
+                        disabled={isSharing || !!currentSession}
+                      />
+                      {depositError && (
+                        <p className="text-sm text-red-400">{depositError}</p>
+                      )}
+                    </div>
+
                     <div className="text-6xl font-mono text-white">
                       {formatTime(sessionTime)}
                     </div>
@@ -492,63 +617,6 @@ export default function Dashboard() {
                             +{session.pointsEarned} pts
                           </p>
                           <p className="text-xs text-slate-400">Earned</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </CardContent>
-            </Card>
-          </TabsContent>
-
-          <TabsContent value="deposits" className="space-y-4">
-            <Card className="bg-slate-800/50 border-slate-700">
-              <CardHeader>
-                <CardTitle className="text-white">Deposit History</CardTitle>
-                <CardDescription>
-                  Your deposits from apps.yellow.com and point redemptions
-                </CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="space-y-4">
-                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
-                    <div className="bg-slate-700/50 rounded-lg p-4">
-                      <p className="text-sm text-slate-400">Total Deposited</p>
-                      <p className="text-2xl font-bold text-white">
-                        ${totalDeposits}
-                      </p>
-                    </div>
-                    <div className="bg-slate-700/50 rounded-lg p-4">
-                      <p className="text-sm text-slate-400">Conversion Rate</p>
-                      <p className="text-2xl font-bold text-green-500">12x</p>
-                    </div>
-                  </div>
-
-                  {deposits.map((deposit) => (
-                    <div
-                      key={deposit.id}
-                      className="border border-slate-600 rounded-lg p-4"
-                    >
-                      <div className="flex justify-between items-start">
-                        <div>
-                          <div className="flex items-center space-x-2">
-                            <Badge className="bg-yellow-600">Deposit</Badge>
-                            <span className="text-sm text-slate-400">
-                              {deposit.platform}
-                            </span>
-                          </div>
-                          <p className="text-sm text-slate-400 mt-1">
-                            {deposit.date.toLocaleDateString()} at{" "}
-                            {deposit.date.toLocaleTimeString()}
-                          </p>
-                        </div>
-                        <div className="text-right">
-                          <p className="text-lg font-bold text-white">
-                            ${deposit.amount}
-                          </p>
-                          <p className="text-sm text-yellow-500">
-                            +{deposit.pointsRedeemed} points
-                          </p>
                         </div>
                       </div>
                     </div>

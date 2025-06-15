@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { Button } from "@/components/ui/button";
@@ -14,22 +14,33 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Badge } from "@/components/ui/badge";
-import {
-  Home,
-  User,
-  Settings,
-  LogOut,
-  Coins,
-  TrendingUp,
-  Menu,
-  X,
-} from "lucide-react";
+import { Home, User, Settings, LogOut, Coins, Menu, X } from "lucide-react";
 import { useUser } from "@/contexts/user-context";
+import { useWallet } from "@/hooks/useWallet";
+import { useClearNode } from "@/hooks/useClearNode";
+import { Hex } from "viem";
 
 export function Navigation() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const pathname = usePathname();
   const { user } = useUser();
+  const { isConnected, connectWallet, walletClient } = useWallet();
+  const { connect } = useClearNode();
+
+  // Initialize ClearNode connection when wallet is connected
+  useEffect(() => {
+    if (walletClient) {
+      connect(walletClient);
+    }
+  }, [walletClient, connect]);
+
+  // Shortened wallet address for display
+  const shortenedAddress = walletClient
+    ? `${walletClient.account?.address.slice(
+        0,
+        6
+      )}...${walletClient.account?.address.slice(-4)}`
+    : "";
 
   const navItems = [
     { href: "/", label: "Dashboard", icon: Home },
@@ -46,7 +57,7 @@ export function Navigation() {
               <span className="text-white font-bold text-sm">GPU</span>
             </div>
             <span className="text-white font-semibold text-lg hidden sm:block">
-              Resource Hub
+              Flex
             </span>
           </Link>
 
@@ -71,8 +82,22 @@ export function Navigation() {
             })}
           </div>
 
-          {/* User Menu */}
+          {/* User Menu and Wallet */}
           <div className="flex items-center space-x-4">
+            {/* Wallet Connection */}
+            {isConnected ? (
+              <Button variant="outline" disabled className="text-slate-300">
+                {shortenedAddress}
+              </Button>
+            ) : (
+              <Button
+                onClick={connectWallet}
+                className="bg-blue-600 hover:bg-blue-700 text-white"
+              >
+                Connect Wallet
+              </Button>
+            )}
+
             {/* Points Display */}
             <div className="hidden sm:flex items-center space-x-2 bg-slate-800 rounded-full px-3 py-1">
               <Coins className="h-4 w-4 text-yellow-500" />
@@ -122,7 +147,6 @@ export function Navigation() {
                     Profile
                   </Link>
                 </DropdownMenuItem>
-
                 <DropdownMenuSeparator className="bg-slate-700" />
                 <DropdownMenuItem className="text-red-400 hover:text-red-300 hover:bg-slate-700">
                   <LogOut className="mr-2 h-4 w-4" />
@@ -168,6 +192,33 @@ export function Navigation() {
                   </Link>
                 );
               })}
+              {/* Mobile Wallet Connection */}
+              {isConnected ? (
+                <Button
+                  variant="outline"
+                  disabled
+                  className="w-full justify-start text-slate-300"
+                >
+                  {shortenedAddress}
+                </Button>
+              ) : (
+                <Button
+                  onClick={() => {
+                    connectWallet();
+                    setIsMobileMenuOpen(false);
+                  }}
+                  className="w-full justify-start bg-blue-600 hover:bg-blue-700 text-white"
+                >
+                  Connect Wallet
+                </Button>
+              )}
+              {/* Mobile Points Display */}
+              <div className="flex items-center space-x-2 px-4 py-2">
+                <Coins className="h-4 w-4 text-yellow-500" />
+                <span className="text-white font-medium">
+                  {user.totalEarnings.toLocaleString()} Points
+                </span>
+              </div>
             </div>
           </div>
         )}
